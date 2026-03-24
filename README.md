@@ -10,6 +10,10 @@ DOI:10.3976/j.issn.1001-4026.2025024
 
 FAN Qianyi, LIU Fangyuan, JI Zelu, BIAN Xiaodong, YU Dingfeng, ZHAO Xinqi. Spatiotemporal evolution and trend analysis of suspended sediment mass concentration in the Yellow River Estuary and adjacent sea areas using Google Earth Engine[J]. Shandong Science, 2025, 38(3): 51-63.
 
+如果使用了本文程序请引用此期刊
+
+If you have used the program described in this article, please cite this journal.
+
 主界面：
 <img width="1907" height="882" alt="image" src="https://github.com/user-attachments/assets/feef10c7-a3e6-40d1-a1ea-d5934b6e4dba" />
 
