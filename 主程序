@@ -1,0 +1,771 @@
+var jjw = 
+    /* color: #27d6c5 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[120.10241246694028, 36.25630175021656],
+          [120.10241246694028, 35.97451788901122],
+          [120.37569737904965, 35.97451788901122],
+          [120.37569737904965, 36.25630175021656]]], null, false),
+    hhk = 
+    /* color: #d60909 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[118.36808790882401, 38.28190257702824],
+          [118.36808790882401, 37.0820747595133],
+          [119.96110548694901, 37.0820747595133],
+          [119.96110548694901, 38.28190257702824]]], null, false),
+    imageVisParam = {"opacity":1,"bands":["constant"],"min":0,"max":500,"palette":["0502e6","0602ff","235cb1","307ef3","269db1","30c8e2","32d3ef","3be285","3ff38f","86e26f","3ae237","b5e22e","d6e21f","fff705","ffd611","ffb613","ff8b13","ff6e08","ff500d","ff0000","de0101"]},
+    imageCollection = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2"),
+    table1 = 
+    /* color: #ff0000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[119.03227728396142, 37.97484288139782],
+          [119.03227728396142, 37.48390662076884],
+          [119.63652533083642, 37.48390662076884],
+          [119.63652533083642, 37.97484288139782]]], null, false),
+    table = ee.FeatureCollection("projects/ee-616613641/assets/hhk");
+//加载研究区
+var roi=table;
+//设置颜色
+var color1 = ['#040274', '#040281', '#0502a3', '#0502b8', '#0502ce', '#0502e6', '#0602ff', '#235cb1',
+    '#307ef3', '#269db1', '#30c8e2', '#32d3ef', '#3be285', '#3ff38f', '#86e26f', '#3ae237', '#b5e22e',
+    '#d6e21f', '#fff705', '#ffd611', '#ffb613', '#ff8b13', '#ff6e08', '#ff500d', '#ff0000', '#de0101',
+    '#c21301', '#a71001', '#911003'
+];
+var vis1 = {
+    min: 0,
+    max: 15000,
+    palette:color1,
+};
+//-----------------------------------------------------------------------------------------
+//基础函数定义
+//Landsat5辐射校正函数
+function applyScaleFactorsL5(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBand, null, true);
+}
+//Landsat7辐射校正函数
+function applyScaleFactorsL7(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBand, null, true);
+}
+//Landsat8辐射校正函数
+function applyScaleFactorsL8(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBands, null, true);
+}
+//Landsat5去云去雪筛选函数
+function maskL5sr(image){
+  var DilatedCloud = 1 << 1; //云层边缘
+  var Cloud = 1 << 3; //云层
+  var CloudShadowBitMask = 1 << 4; //云影
+  var SnowBitMask = 1 << 5; //积雪
+  var qa = image.select('QA_PIXEL');
+  var mask = qa.bitwiseAnd(DilatedCloud).eq(0)
+        .and(qa.bitwiseAnd(Cloud).eq(0))
+        .and(qa.bitwiseAnd(CloudShadowBitMask).eq(0))
+        .and(qa.bitwiseAnd(SnowBitMask).eq(0));
+  return image.updateMask(mask);
+}
+//Landsat7去云去雪筛选函数
+function maskL7sr(image){
+  var DilatedCloud = 1 << 1; //云层边缘
+  var Cloud = 1 << 3; //云层
+  var CloudShadowBitMask = 1 << 4; //云影
+  var SnowBitMask = 1 << 5; //积雪
+  var qa = image.select('QA_PIXEL');
+  var mask = qa.bitwiseAnd(DilatedCloud).eq(0)
+        .and(qa.bitwiseAnd(Cloud).eq(0))
+        .and(qa.bitwiseAnd(CloudShadowBitMask).eq(0))
+        .and(qa.bitwiseAnd(SnowBitMask).eq(0));
+  return image.updateMask(mask);
+}
+//Landsat8去云去雪筛选函数
+function maskL8sr(image){
+  var DilatedCloud = 1 << 1; //云层边缘
+  var Cloud = 1 << 3; //云层
+  var CloudShadowBitMask = 1 << 4; //云影
+  var SnowBitMask = 1 << 5; //积雪
+  var qa = image.select('QA_PIXEL');
+  var mask = qa.bitwiseAnd(DilatedCloud).eq(0)
+        .and(qa.bitwiseAnd(Cloud).eq(0))
+        .and(qa.bitwiseAnd(CloudShadowBitMask).eq(0))
+        .and(qa.bitwiseAnd(SnowBitMask).eq(0));
+  return image.updateMask(mask);
+}
+// 获取影像的时间信息，并以yyyyMMdd格式保存到属性"date"中
+function Date(image) {
+  var water = image;
+  water = water.set("date", ee.Date(image.get("system:time_start")).format("yyyyMMdd")); 
+  return water;
+}
+//计算归一化水体指数(MNDWI),添加MNDWI波段到影像中
+function L8MNDWI(image) {
+  var mndwi = image.normalizedDifference(["SR_B3", "SR_B5"]);  
+  return image.addBands(mndwi.rename("MNDWI"));  
+}
+//边缘otsu算法进行水体提取
+function edgecalcWater(imageCollection, kwargs, geom) {
+// 强制将输入参数imageCollection转换为ee.ImageCollection类型，用于后续处理
+imageCollection = ee.ImageCollection(imageCollection);
+// 获取影像集合中使用的波段名称列表，用于后续操作
+var bandList = ee.Image(imageCollection.first()).bandNames();
+  // 定义关键字的默认参数
+  var kwargDefaults = {
+    'initialThreshold':-0.2,  // 初始阈值
+    'reductionScale': 20,  // 缩减比例
+    //'smoothing': 200,
+    'bandName': bandList.get(0),  // 波段名称
+    'connectedPixels': 100,  // 连通像素数阈值
+    'edgeLength': 20,  // 边缘长度
+    'smoothEdges': 300,  // 平滑边缘距离
+    'cannyThreshold': 0.99,  // Canny边缘检测阈值
+    'cannySigma': 0.7,  // Canny边缘检测Sigma值
+    'cannyLt': 0.05,
+    'maxBuckets': 255,  // 最大分桶数
+    'minBucketWidth': 0.001,  // 最小桶宽度
+    'maxRaw': 1e6,  // 最大原始值
+    'invert': false,  // 是否反转
+    'verbose': false  // 是否输出详细信息
+  };
+  // 获取关键字的键值列表
+  var kwargKeys = [];
+  for (var key in kwargDefaults) {
+    kwargKeys.push(key);
+  }
+  var params;
+  var i, k, v;
+  // 遍历关键字并构建ee.Dictionary
+  // 如果输入中定义了关键字，则使用输入值；否则使用默认值
+  params = ee.Dictionary(kwargs);
+  for (i = 0; i < kwargKeys.length; i++) {
+    k = kwargKeys[i];
+    v = kwargDefaults[k];
+    params = ee.Dictionary(
+      ee.Algorithms.If(params.contains(k), params, params.set(k, v))
+    );
+  }
+  // 所有方法的共同参数
+  var initialThreshold = ee.Number(params.get('initialThreshold')),  // 初始阈值
+      reductionScale   = ee.Number(params.get('reductionScale')),  // 缩减比例
+      //smoothing        = ee.Number(params.get('smoothing')),
+      bandName         = ee.String(params.get('bandName')),  // 波段名称
+      connectedPixels  = ee.Number(params.get('connectedPixels')),  // 连通像素数阈值
+      edgeLength       = ee.Number(params.get('edgeLength')),  // 边缘长度
+      smoothEdges      = ee.Number(params.get('smoothEdges')),  // 平滑边缘距离
+      cannyThreshold   = ee.Number(params.get('cannyThreshold')),  // Canny边缘检测阈值
+      cannySigma       = ee.Number(params.get('cannySigma')),  // Canny边缘检测Sigma值
+      cannyLt          = ee.Number(params.get('cannyLt')),
+      maxBuckets       = ee.Number(params.get('maxBuckets')),  // 最大分桶数
+      minBucketWidth   = ee.Number(params.get('minBucketWidth')),  // 最小桶宽度
+      maxRaw           = ee.Number(params.get('maxRaw')),  // 最大原始值
+      invert           = params.get('invert'),  // 是否反转
+      verbose          = params.get('verbose').getInfo();  // 是否输出详细信息
+      
+  var img = imageCollection.select(bandName).mean().clip(geom);
+  // 获取图像集合中指定波段的平均值影像，并裁剪到指定几何范围内
+  // 获取初始水体
+  var binary_Image = img.gt(initialThreshold).rename('binary');
+  // 获取Canny边缘
+  var canny = ee.Algorithms.CannyEdgeDetector(binary_Image, cannyThreshold, cannySigma);
+  // 处理Canny边缘，true为8连通
+  var connected = canny.updateMask(canny).lt(cannyLt).connectedPixelCount(connectedPixels, true);
+  var edges = connected.gte(edgeLength);
+  edges = edges.updateMask(edges);
+  var edgeBuffer = edges.focal_max(smoothEdges, 'square', 'meters');
+  // 获取Otsu阈值所需的直方图
+  var histogram_image = img.updateMask(edgeBuffer);
+  print(histogram_image);
+  var chart = ui.Chart.image.histogram({
+  image: histogram_image,
+  region: table1,
+  scale: 200,
+  minBucketWidth: 300,
+  maxPixels:1e13
+  }).setOptions({
+  width: 400,
+  height: 240,
+  title: 'Histogram of MNDWI in roi',
+  colors: ['#e0440e', '#e6693e', '#ec8f6e', '#f3b49f', '#f6c7b6']
+  });
+  print(chart);
+  // 计算直方图
+  var histogram = ee.Dictionary(histogram_image.reduceRegion({
+    reducer: ee.Reducer.histogram(maxBuckets, minBucketWidth, maxRaw)
+      .combine('mean', null, true).combine('variance', null, true),
+    geometry: geom,
+    scale: reductionScale,
+    maxPixels: 1e13,
+    tileScale: 16
+  }).get(bandName.cat('_histogram')));
+
+  var threshold = otsu(histogram);
+  // 分割影像并屏蔽值为0的部分（非水体）
+  var waterImg = ee.Image(ee.Algorithms.If(invert, img.lt(threshold), img.gt(threshold)));
+  return waterImg;
+}
+
+// Otsu方法计算阈值
+function otsu(histogram) {
+  var counts = ee.Array(ee.Dictionary(histogram).get('histogram'));
+  var means = ee.Array(ee.Dictionary(histogram).get('bucketMeans'));
+  var size = means.length().get([0]);
+  var total = counts.reduce(ee.Reducer.sum(), [0]).get([0]);
+  var sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0]);
+  var mean = sum.divide(total);
+  var indices = ee.List.sequence(1, size);
+  var bss = indices.map(function(i) {
+    var aCounts = counts.slice(0, 0, i);
+    var aCount = aCounts.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var aMeans = means.slice(0, 0, i);
+    var aMean = aMeans.multiply(aCounts)
+      .reduce(ee.Reducer.sum(), [0]).get([0])
+      .divide(aCount);
+    var bCount = total.subtract(aCount);
+    var bMean = sum.subtract(aCount.multiply(aMean)).divide(bCount);
+    return aCount.multiply(aMean.subtract(mean).pow(2)).add(
+      bCount.multiply(bMean.subtract(mean).pow(2)));
+  });
+  return means.sort(bss).get([-1]);
+}
+
+// 计算水体掩膜
+function calWaterMask(image) {
+  var MNDWI_S2 = image.select("NDWI");
+  var histogram = MNDWI_S2.reduceRegion({
+    reducer: ee.Reducer.histogram(),
+    geometry: table1,
+    scale: 30,
+    maxPixels: 1e13,
+    tileScale: 8
+  });
+  var threshold_S2 = otsu(histogram.get("NDWI"));
+  var mask = MNDWI_S2.gte(threshold_S2);
+  return image.addBands(mask.rename('mask'));
+}
+//-------------------------------------------------------------------------------------------------------------
+// 设定面板位置和大小
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+// 创建图例标签和格式这里的style就是设定格式的
+var legendTitle = ui.Label({
+  value: '悬浮泥沙浓度 (mg/L)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+ // 将标题添加到面板上
+legend.add(legendTitle); 
+// 这里我们需要创建一个横跨影像最高最低值的图例，这里就是获取经最大最小值
+var lon =ee.Image.pixelLonLat().select('latitude');
+//这里先是计算最大到最小的差异，然后最添加最小值
+var gradient = lon.multiply((vis1.max-vis1.min)/100.0).add(vis1.min);
+//对梯度进行可视化操作
+var legendImage = gradient.visualize(vis1);
+// 在图例的顶部创建文本
+var panel = ui.Panel({
+    widgets: [
+      ui.Label(vis1['max'])
+    ],
+  });
+legend.add(panel);
+// 从图像中创建缩略图
+var thumbnail = ui.Thumbnail({
+  image: legendImage, 
+  params: {bbox:'0,0,10,100', dimensions:'20x200'},  
+  style: {padding: '1px', position: 'bottom-center'}
+});
+// 将缩略图添加到面板
+legend.add(thumbnail);
+// 在图例的顶部创建文本
+var panel = ui.Panel({
+    widgets: [
+      ui.Label(1['min'])
+    ],
+  });
+legend.add(panel);
+//print(legend);
+Map.add(legend);
+//————————————————————————————————————————————————————————————————————————————————————
+
+// var ls = ee.ImageCollection('LANDSAT/LC8_L1T_8DAY_NDVI')
+//     .filterDate('2015-04-01', '2015-10-01');
+// var vis = {min: 0, max: 1, palette: ['99c199', '006400']};
+// //Map.addLayer(ls.median(), vis, 'NDVI');
+// Map.style().set('cursor', 'crosshair');
+// var inspector = ui.Panel([ui.Label('Click to get max NDVI')]);
+// Map.add(inspector);
+// Map.onClick(function(coords) {
+//   // Show the loading label.
+//   inspector.widgets().set(0, ui.Label({
+//     value: 'Loading...',
+//     style: {color: 'gray'}
+//   }));
+ 
+// var point = ee.Geometry.Point(coords.lon, coords.lat);
+// var meanNdvi = ls.reduce('mean');
+// var sample = meanNdvi.sample(point, 30);
+// var computedValue = sample.first().get('NDVI_mean');
+
+// computedValue.evaluate(function(result) {
+//     // When the server returns the value, show it.
+//     inspector.widgets().set(0, ui.Label({
+//       value: 'Mean NDVI: ' + result.toFixed(2),
+//     }));
+//   });
+// });
+// var ndvi = ls.median();
+// //Map.addLayer(ndvi, {min:-0.1, max:0.6},'median NDVI ');
+// //Map.addLayer(test_gray, {}, 'geometry');
+
+// var chart = ui.Chart.image.histogram({
+//     image: ndvi,
+//     region: table,
+//     scale: 30,
+//     maxBuckets: 1000,//最大组数
+//     minBucketWidth: 0.01, //最小组距
+//     // maxRaw, 
+//     maxPixels: 1e13
+// })
+// var panel1 = ui.Panel({style: {width: '400px'}})
+//     .add(ui.Label('NDVI值直方图'))
+//     .add(chart);
+// print(panel1);
+//--------------------------------------------------------------------------------------------
+var title = ui.Label({
+  value: '悬浮泥沙浓度反演系统',
+  style: {'fontSize': '24px'}
+});
+//App summary
+var text = ui.Label(
+  'Suspended sediment concentration inversion system',
+    {fontSize: '15px'});
+var mainPanel=ui.Panel({
+  widgets:[title,text],
+  style:{width:'350px'}
+});
+
+var imageL5 = 'Landsat 5 TM',
+    imageL7 = 'Landsat 7 ETM+',
+    imageL8 = 'Landsat 8 OLI';
+
+var selectAoi = ui.Select({
+  items:[imageL5,imageL7,imageL8],
+  placeholder:'Select area of interest',
+  });
+
+var selectSIAOI = ui.Label({value:'请选择你感兴趣的卫星传感器',
+style: {fontSize: '18px', fontWeight: 'bold'}});
+
+mainPanel.add(selectSIAOI)
+     .add(selectAoi);
+
+//This creates another panel to house a line separator and instructions for the user
+var intro = ui.Panel([
+  ui.Label({
+    value: '____________________________________________',
+    style: {fontWeight: 'bold',  color: '4A997E'},
+  }),
+  ui.Label({
+    value:'选择要显示的时间段',
+    style: {fontSize: '15px', fontWeight: 'bold'}
+  })]);
+
+mainPanel.add(intro);
+
+var dropdownPanel = ui.Panel({
+  layout: ui.Panel.Layout.flow('horizontal'),
+});
+mainPanel.add(dropdownPanel);
+
+var yearSelector2 = ui.Select({
+  placeholder: 'please wait..',
+  });
+
+var button = ui.Button('Load')
+dropdownPanel.add(yearSelector2)
+dropdownPanel.add(button)
+
+// 设置逐年的影像时间序列表
+var years = ee.List.sequence(1984, 2024);
+// var months = 1;  
+//var months = ee.List.sequence(1, 12)
+ 
+// 下拉式项目需要是字符串
+var yearStrings2 = years.map(function(year){
+  return ee.Number(year).format('%04d');
+});
+// var monthStrings =  months.map(function(month){
+//   return ee.Number(month).format('%02d')
+// })
+
+// 评估结果并填入下拉菜单
+yearStrings2.evaluate(function(yearList){
+  yearSelector2.items().reset(yearList);
+  yearSelector2.setPlaceholder('select a year');
+});
+ 
+//月的时间数据是备用的
+// monthStrings.evaluate(function(monthList) {
+//   monthSelector.items().reset(monthList)
+//   monthSelector.setPlaceholder('select a month')
+ 
+// })
+var MNDWI;
+var loadComposite = function() {
+var year = yearSelector2.getValue()
+var startDate = ee.Date.fromYMD(
+    ee.Number.parse(year),1,1)    
+var endDate = startDate.advance(1, 'year')
+var dataset,ssc,MNDWI;
+if (year <= 1999){
+// 计算Landsat 5的MNDWI指数
+// 为影像添加日期属性
+// 获取startDate年至endDate年之间的Landsat 5影像集合
+var L5_mask = ee.ImageCollection("LANDSAT/LT05/C02/T1_L2")
+                .filterDate(startDate, endDate) // 筛选日期范围
+                .filterBounds(table1) // 筛选roi内的影像
+                .filter(ee.Filter.lte('CLOUD_COVER', 5)) // 筛选云覆盖率小于等于5%的影像
+                .map(L8MNDWI) // 应用L8MNDWI函数对影像集合进行处理
+                .map(function(image) {
+                    return Date(image); // 为每个影像添加日期属性
+                  });
+MNDWI = L5_mask.select('MNDWI'); // 从影像集合中选择MNDWI波段
+dataset= ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+           .filterDate(startDate,endDate)
+           .filterBounds(table)
+           .filter(ee.Filter.lt('CLOUD_COVER',5))
+           .map(applyScaleFactorsL5)
+           .map(maskL5sr)
+           .mean();
+var L5b3=dataset.select('SR_B3')
+              .clip(table);
+var L5b4=dataset.select('SR_B4')
+              .clip(table);
+var L5b2=dataset.select('SR_B2')
+              .clip(table);       
+ssc = (((L5b3.pow(2)).multiply(614561.673)).add(L5b3.multiply(1349.630))).add(5.184);
+//var L5pre = (((L5b3.divide(L5b2)).multiply(0.7603)).add(L5b4.multiply(21.7036))).add(0.6547);
+//ssc = ee.Image.constant(10).pow(L5pre);
+  }
+else if(year >1999 && year<=2012){
+// 计算Landsat 5的MNDWI指数
+// 为影像添加日期属性
+
+// 获取startDate年至endDate年之间的Landsat 5影像集合
+var L7_mask = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+                .filterDate(startDate, endDate) // 筛选日期范围
+                .filterBounds(table1) // 筛选roi内的影像
+                .filter(ee.Filter.lte('CLOUD_COVER', 5)) // 筛选云覆盖率小于等于5%的影像
+                .map(L8MNDWI) // 应用L8MNDWI函数对影像集合进行处理
+                .map(function(image) {
+                    return Date(image); // 为每个影像添加日期属性
+                  });
+MNDWI = L7_mask.select('MNDWI'); // 从影像集合中选择MNDWI波段
+dataset= ee.ImageCollection('LANDSAT/LE07/C02/T1_L2')
+           .filterDate(startDate,endDate)
+           .filterBounds(table)
+           .filter(ee.Filter.lt('CLOUD_COVER',5))
+           .map(applyScaleFactorsL7)
+           .map(maskL7sr)
+           .mean();
+var L7b3=dataset.select('SR_B3')
+              .clip(table);
+var L7b4=dataset.select('SR_B4')
+              .clip(table);
+var L7b2=dataset.select('SR_B2')
+              .clip(table);
+ssc = (((L7b3.pow(2)).multiply(614561.673)).add(L7b3.multiply(1349.630))).add(5.184);
+//var L7pre = (((L7b3.divide(L7b2)).multiply(0.746)).add(L7b4.multiply(21.2955))).add(0.6654);
+//ssc = ee.Image.constant(10).pow(L7pre);
+  }
+else if (year > 2012){
+// 计算Landsat 5的MNDWI指数
+// 为影像添加日期属性
+
+// 获取startDate年至endDate年之间的Landsat 5影像集合
+var L8_mask = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+                .filterDate(startDate, endDate) // 筛选日期范围
+                .filterBounds(table1) // 筛选roi内的影像
+                .filter(ee.Filter.lte('CLOUD_COVER', 5)) // 筛选云覆盖率小于等于5%的影像
+                .map(L8MNDWI) // 应用L8MNDWI函数对影像集合进行处理
+                .map(function(image) {
+                    return Date(image); // 为每个影像添加日期属性
+                  });
+MNDWI = L8_mask.select('MNDWI'); // 从影像集合中选择MNDWI波段
+dataset = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+            .filterDate(startDate, endDate)
+            .filterBounds(table)
+            .filter(ee.Filter.lt('CLOUD_COVER',5))
+            .map(applyScaleFactorsL8)
+            .map(maskL8sr)
+            .mean();
+var L8b3=dataset.select('SR_B3')
+              .clip(table);
+var L8b4=dataset.select('SR_B4')
+              .clip(table);
+var L8b5=dataset.select('SR_B5')
+              .clip(table);
+ssc = (((L8b4.pow(2)).multiply(614561.673)).add(L8b4.multiply(1349.630))).add(5.184);
+//var L8pre = (((L8b4.divide(L8b3)).multiply(0.8079)).add(L8b5.multiply(23.062))).add(0.6258);
+//ssc = ee.Image.constant(10).pow(L8pre);
+}
+//print('ssc',ssc);
+//设置中心
+Map.centerObject(hhk,8);
+//var styling = {color:'yellow',fillColor:'00000000'};
+//Map.addLayer(table.style(styling),{},"yellowriver");
+//加载ssc图层
+Map.addLayer(ssc,vis1,'SSC');
+Export.image.toDrive({
+  image:ssc,
+  description: year+'sscimage', // 导出文件的描述
+  scale:30, // 导出影像的分辨率
+  region:roi, // 导出影像的范围
+  fileFormat: 'GEOTIFF', // 导出文件的格式
+  maxPixels:1e13, // 导出影像的最大像素数
+});
+
+// 调用edgecalcWater函数对MNDWI进行水体提取
+var Collection = edgecalcWater(MNDWI,{
+    initialThreshold:-0.2, // 初始阈值
+    smoothEdges: 300, // 平滑边缘的距离
+    verbose: true // 是否输出详细信息
+  },table1);
+var water_L8 = Collection.rename("water"); // 将提取结果重命名为water_L8
+//print(water_L8);
+
+// 在地图上添加水体提取结果的图层，使用自定义的颜色调色板
+// Implement a threshold.
+var seaVeg = water_L8.lt(0.5);
+// Map the threshold.
+// Create a binary mask of non-forest.
+var vegMask = seaVeg.eq(1);
+// Update the seaVeg mask with the non-forest mask.
+var maskedVeg = seaVeg.updateMask(vegMask);
+// Map the updated Veg layer
+// 导出水体掩膜影像到Google Drive
+Map.addLayer(maskedVeg,
+{
+    min: 0,
+    max: 1,
+    palette: ['#000000']
+},
+'Masked Forest Layer'); 
+Export.image.toDrive({
+  image:maskedVeg,
+  description: year+'mask', // 导出文件的描述
+  scale:30, // 导出影像的分辨率
+  region:table1, // 导出影像的范围
+  fileFormat: 'GEOTIFF', // 导出文件的格式
+  maxPixels:1e13, // 导出影像的最大像素数
+});
+}
+button.onClick(loadComposite)
+ui.root.add(mainPanel);
+var Rbutton = ui.Button('Reset')
+dropdownPanel.add(Rbutton)
+var remove = function(){
+Map.clear()
+//Set up a satellite background
+Map.setOptions('Satellite')
+}
+Rbutton.onClick(remove);
+//----------------------------------------------------------------------------------
+var panel = ui.Panel({style: {width:'25%'}});
+ui.root.insert(0,panel);
+
+var intro = ui.Label('基于GEE的卫星海洋遥感水质监测系统',
+  {fontWeight: 'bold', fontSize: '24px', margin: '10px 5px'}
+);
+var subtitle = ui.Label('Satellite ocean remote sensing water quality monitoring system based on GEE', 
+  {fontWeight: 'bold', fontSize: '20px', margin: '10px 5px'});
+
+panel.add(intro)
+     .add(subtitle);
+
+var COLO = '黄河口及其邻近海域',
+    NILE = '青岛胶州湾海域';
+
+var selectAoi = ui.Select({
+  items:[COLO,NILE],
+  placeholder:'Select area of interest',
+  });
+
+var selectSIAOI = ui.Label({value:'请选择你感兴趣的区域',
+style: {fontSize: '18px', fontWeight: 'bold'}});
+
+panel.add(selectSIAOI)
+     .add(selectAoi);
+     
+var watchbutton = ui.Button('Watch')
+panel.add(watchbutton)
+
+
+function roiClip(image){
+  return image.clip(roi)
+}    
+
+var aoi,
+    areaOfInterest;
+var choose = function applyFilter(){
+function setAreaOfInterest(){
+  aoi = selectAoi.getValue();
+  if (aoi == COLO){
+      areaOfInterest = table1;
+      Map.centerObject(table1,9);
+      Map.addLayer(areaOfInterest, {color:'FF0000'}, 'Yellow River');
+  }//sets the area to nile river delta
+  else if(aoi == NILE){
+      areaOfInterest = jjw;
+      Map.centerObject(jjw,9);
+      Map.addLayer(areaOfInterest, {color:'27d6c5'}, 'Yellow River');
+  }//sets the area of interest to
+}
+
+setAreaOfInterest();
+}
+
+watchbutton.onClick(choose)
+
+var intro1 = ui.Panel([
+  ui.Label({
+    value: '_______________________________________________',
+    style: {fontWeight: 'bold',  color: '4A997E'},
+  }),
+  ui.Label({
+    value:'原始影像查询',
+    style: {fontSize: '15px', fontWeight: 'bold'}
+  })]);
+
+panel.add(intro1);
+
+var visualization57 = {
+  bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+  min: 0.0,
+  max: 0.3,
+};
+
+var visualization8 = {
+  bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+  min: 0.0,
+  max: 0.3,
+};
+
+var dropdownpanel = ui.Panel({
+  layout: ui.Panel.Layout.flow('horizontal'),
+});
+panel.add(dropdownpanel);
+
+var yearSelector1 = ui.Select({
+  placeholder: 'please wait..',
+  })
+
+var Loadbutton = ui.Button('Load')
+dropdownpanel.add(yearSelector1)
+dropdownpanel.add(Loadbutton)
+
+// 设置逐年的影像时间序列表
+var years = ee.List.sequence(1984, 2024)
+//var months = 1;  
+//var months = ee.List.sequence(1, 12)
+ 
+// 下拉式项目需要是字符串
+var yearStrings1 = years.map(function(year){
+  return ee.Number(year).format('%04d')
+})
+//var monthStrings =  months.map(function(month){
+//return ee.Number(month).format('%02d')
+// })
+ 
+// 评估结果并填入下拉菜单
+yearStrings1.evaluate(function(yearList) {
+  yearSelector1.items().reset(yearList);
+  yearSelector1.setPlaceholder('select a year');
+});
+ 
+//月的时间数据是备用的
+// monthStrings.evaluate(function(monthList) {
+//   monthSelector.items().reset(monthList)
+//   monthSelector.setPlaceholder('select a month')
+ 
+// })
+
+var RealColor = function() {
+  //var L5 = ee.ImageCollection ('LANDSAT/LT05/C02/T1_L2');
+  //var L7 = ee.ImageCollection ('LANDSAT/LE07/C02/T1_L2');  
+  //var L8 = ee.ImageCollection ('LANDSAT/LC08/C02/T1_L2');
+var year = yearSelector1.getValue();
+var startDate = ee.Date.fromYMD(
+    ee.Number.parse(year),1,1);
+var endDate = startDate.advance(1, 'year');
+var dataset,ssc,MNDWI;
+if (year <= 1999){
+// 计算Landsat 5的MNDWI指数
+// 为影像添加日期属性
+// 获取startDate年至endDate年之间的Landsat 5影像集合
+dataset= ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+           .filterDate(startDate,endDate)
+           .filterBounds(table1)
+           .filter(ee.Filter.lt('CLOUD_COVER',5))
+           .map(applyScaleFactorsL5)
+           //.map(maskL5sr)
+           .median()
+           .clip(table1); 
+Map.addLayer(dataset, visualization57, 'True Color (321)');
+
+}
+
+else if(year >1999 && year<=2012){
+// 计算Landsat 5的MNDWI指数
+// 为影像添加日期属性
+// 获取startDate年至endDate年之间的Landsat 5影像集合
+dataset= ee.ImageCollection('LANDSAT/LE07/C02/T1_L2')
+           .filterDate(startDate,endDate)
+           .filterBounds(table1)
+           .filter(ee.Filter.lt('CLOUD_COVER',5))
+           .map(applyScaleFactorsL7)
+           //.map(maskL7sr)
+           .median()
+           .clip(table1);
+Map.addLayer(dataset, visualization57, 'True Color (321)');
+  }
+else if (year > 2012){
+// 获取startDate年至endDate年之间的Landsat 8影像集合
+dataset = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+            .filterDate(startDate, endDate)
+            .filterBounds(table1)
+            .filter(ee.Filter.lt('CLOUD_COVER',5))
+            .map(applyScaleFactorsL8)
+            //.map(maskL8sr)
+            .median()
+            .clip(table1);
+Map.addLayer(dataset, visualization8, 'True Color (432)');
+}
+};
+Loadbutton.onClick(RealColor);
+var removebutton = ui.Button('Reset')
+dropdownpanel.add(removebutton)
+var remove1 = function(){
+Map.clear()
+//Set up a satellite background
+Map.setOptions('Satellite')
+}
+removebutton.onClick(remove1);
+//var styling = {color:'yellow',fillColor:'00000000'};
+//Map.addLayer(table.style(styling),{},"yellowriver");
+
